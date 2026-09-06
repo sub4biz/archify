@@ -60,6 +60,8 @@ test('repository evidence accepts canonical HTTPS and common SSH remotes', () =>
   const output = path.join(data.root, 'remote-form.html');
   for (const remote of [
     'https://github.com/example/evidence-repo.git/',
+    'https://x-access-token:not-a-real-token@github.com/example/evidence-repo.git',
+    'https://oauth2:not-a-real-token@github.com/example/evidence-repo',
     'git@github.com:example/evidence-repo.git',
     'ssh://git@github.com/example/evidence-repo.git',
   ]) {
@@ -125,6 +127,23 @@ test('repository evidence is opt-in and never appears in ordinary artifacts', ()
   assert.match(html, /id="focus-evidence" hidden/);
   const svg = html.match(/<svg\b[\s\S]*?<\/svg>/)?.[0] || '';
   assert.doesNotMatch(svg, /source-evidence-beacon|data-source-evidence-count/);
+});
+
+
+test('origin-mismatch diagnostics redact HTTPS remote userinfo', () => {
+  const data = fixture();
+  const output = path.join(data.root, 'must-stay.html');
+  fs.writeFileSync(output, 'trusted previous artifact');
+  git(data.root, 'remote', 'set-url', 'origin', 'https://user:not-a-real-token@github.com/example/other-repo.git');
+  const result = run(['deliver', 'architecture', data.input, output, '--repo-root', data.root, '--json']);
+  assert.equal(result.status, 1);
+  const receipt = JSON.parse(result.stdout);
+  const diagnostic = receipt.diagnostics.find((entry) => entry.code === 'repository-evidence/origin-mismatch');
+  assert.ok(diagnostic, 'expected origin-mismatch diagnostic');
+  assert.doesNotMatch(receipt.error, /not-a-real-token/);
+  assert.doesNotMatch(JSON.stringify(receipt.diagnostics), /not-a-real-token/);
+  assert.match(diagnostic.evidence.localOrigin, /^https:\/\/REDACTED@github\.com\/example\/other-repo\.git$/);
+  assert.equal(fs.readFileSync(output, 'utf8'), 'trusted previous artifact');
 });
 
 test('evidence fails closed without a root, on wrong origin, missing blobs, or impossible lines', () => {
