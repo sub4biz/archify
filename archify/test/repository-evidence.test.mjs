@@ -146,6 +146,22 @@ test('origin-mismatch diagnostics redact HTTPS remote userinfo', () => {
   assert.equal(fs.readFileSync(output, 'utf8'), 'trusted previous artifact');
 });
 
+test('origin-mismatch diagnostics redact HTTP remote userinfo', () => {
+  const data = fixture();
+  const output = path.join(data.root, 'must-stay.html');
+  fs.writeFileSync(output, 'trusted previous artifact');
+  git(data.root, 'remote', 'set-url', 'origin', 'http://user:FAKE_SECRET@github.com/example/other');
+  const result = run(['deliver', 'architecture', data.input, output, '--repo-root', data.root, '--json']);
+  assert.equal(result.status, 1);
+  const receipt = JSON.parse(result.stdout);
+  const diagnostic = receipt.diagnostics.find((entry) => entry.code === 'repository-evidence/origin-mismatch');
+  assert.ok(diagnostic, 'expected origin-mismatch diagnostic');
+  assert.doesNotMatch(receipt.error, /FAKE_SECRET/);
+  assert.doesNotMatch(JSON.stringify(receipt.diagnostics), /FAKE_SECRET/);
+  assert.match(diagnostic.evidence.localOrigin, /^http:\/\/REDACTED@github\.com\/example\/other$/);
+  assert.equal(fs.readFileSync(output, 'utf8'), 'trusted previous artifact');
+});
+
 test('evidence fails closed without a root, on wrong origin, missing blobs, or impossible lines', () => {
   const data = fixture();
   const output = path.join(data.root, 'must-stay.html');

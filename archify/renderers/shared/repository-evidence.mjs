@@ -39,7 +39,8 @@ function gitValue(repoRoot, args, failure) {
 }
 
 function redactRemoteUrl(value) {
-  return String(value || '').replace(/^(https:\/\/)[^/@\s]+@/i, '$1REDACTED@');
+  // Strip userinfo for any http(s) remote so rejected origins cannot leak credentials.
+  return String(value || '').replace(/^(https?:\/\/)[^/@\s]+@/i, '$1REDACTED@');
 }
 
 function normalizeRemoteForSlug(value) {
