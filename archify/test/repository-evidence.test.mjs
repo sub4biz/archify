@@ -162,6 +162,67 @@ test('origin-mismatch diagnostics redact HTTP remote userinfo', () => {
   assert.equal(fs.readFileSync(output, 'utf8'), 'trusted previous artifact');
 });
 
+test('validate accepts credentialed HTTPS remotes and redacts mismatch diagnostics', () => {
+  const data = fixture();
+  git(data.root, 'remote', 'set-url', 'origin', 'https://x-access-token:not-a-real-token@github.com/example/evidence-repo.git');
+  let result = run(['validate', 'architecture', data.input, '--repo-root', data.root, '--json']);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(JSON.parse(result.stdout).ok, true);
+
+  git(data.root, 'remote', 'set-url', 'origin', 'https://user:VALIDATE_SECRET@github.com/example/other-repo.git');
+  result = run(['validate', 'architecture', data.input, '--repo-root', data.root, '--json']);
+  assert.equal(result.status, 1);
+  const receipt = JSON.parse(result.stdout);
+  const diagnostic = receipt.diagnostics.find((entry) => entry.code === 'repository-evidence/origin-mismatch');
+  assert.ok(diagnostic, 'expected origin-mismatch diagnostic');
+  assert.doesNotMatch(receipt.error, /VALIDATE_SECRET/);
+  assert.doesNotMatch(JSON.stringify(receipt.diagnostics), /VALIDATE_SECRET/);
+  assert.doesNotMatch(result.stderr, /VALIDATE_SECRET/);
+  assert.match(diagnostic.evidence.localOrigin, /^https:\/\/REDACTED@github\.com\/example\/other-repo\.git$/);
+});
+
+test('preview accepts credentialed HTTPS remotes and redacts mismatch diagnostics', { timeout: 20000 }, async () => {
+  const data = fixture();
+  const output = path.join(data.root, 'preview-credential.html');
+  git(data.root, 'remote', 'set-url', 'origin', 'https://oauth2:not-a-real-token@github.com/example/evidence-repo');
+  const matched = await startPreview({
+    type: 'architecture',
+    input: data.input,
+    output,
+    repoRoot: data.root,
+    open: false,
+    debounceMs: 30,
+    pollMs: 60,
+  });
+  try {
+    const state = await waitForState(matched.url, (candidate) => candidate.status === 'verified');
+    assert.equal(state.revision, 1);
+    const html = await (await fetch(new URL('/artifact.html', matched.url))).text();
+    assert.equal(evidencePayload(html).repository.revision, data.revision);
+  } finally {
+    await matched.stop();
+  }
+
+  git(data.root, 'remote', 'set-url', 'origin', 'https://user:PREVIEW_SECRET@github.com/example/other-repo.git');
+  const mismatched = await startPreview({
+    type: 'architecture',
+    input: data.input,
+    output,
+    repoRoot: data.root,
+    open: false,
+    debounceMs: 30,
+    pollMs: 60,
+  });
+  try {
+    const state = await waitForState(mismatched.url, (candidate) => candidate.status === 'needs-fix');
+    assert.equal(state.failure?.stage, 'render');
+    assert.match(state.failure?.message || '', /repository-evidence\/origin-mismatch/);
+    assert.doesNotMatch(JSON.stringify(state), /PREVIEW_SECRET/);
+  } finally {
+    await mismatched.stop();
+  }
+});
+
 test('evidence fails closed without a root, on wrong origin, missing blobs, or impossible lines', () => {
   const data = fixture();
   const output = path.join(data.root, 'must-stay.html');
